@@ -1,0 +1,14 @@
+{
+  "id": "sagmans.table-view",
+  "name": "Table view",
+  "apiVersion": 1,
+  "description": "Read wide Markdown tables with ease: \"View tables\" in the message ⋯ menu opens all tables of the message in a full-screen dialog. Cell text stays plain text; no network or host access.",
+  "discovery": {
+    "category": "productivity",
+    "tags": [
+      "Markdown",
+      "Tables",
+      "Messages"
+    ]
+  }
+}
