@@ -81,6 +81,9 @@ The Buzz mobile app runs no plugins. On mobile, the message menu has no
   in the message menu and opens all tables of the message.
 - The parser follows the GFM table rules for common text. A table inside a
   block quote or a list item gets no entry.
+- The dialog draws up to 50,000 cells of each table. A larger table shows
+  its first rows and a notice. This keeps a very large or hostile message
+  from freezing the app.
 
 ## Security
 
@@ -88,6 +91,9 @@ The Buzz mobile app runs no plugins. On mobile, the message menu has no
   as untrusted. It gives each cell to React as text. It never sets raw HTML
   and never makes a link from cell text. `scripts/check` blocks the raw-HTML
   sinks of the DOM and React in `plugin/plugin.js`.
+- The parser reads each message in time that grows linearly with its
+  length, so a long hostile message cannot freeze the message list. The
+  smoke scenarios check this with long hostile texts.
 - The plugin asks for no native host access, no network origins and no
   processes: the manifest has no `host` block. It uses two app services:
   React and conversation.
