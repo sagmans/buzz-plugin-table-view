@@ -10,7 +10,7 @@
 //     code fences, look-alike text, several tables, edited messages;
 //   - dialog: every table drawn, title and captions, Close and Escape;
 //   - trust: cell text stays React text (no raw HTML, no links), only `<br>`
-//     becomes a line break.
+//     becomes a line break; long hostile text parses and draws fast.
 //
 // Usage: node scripts/smoke.mjs [path/to/plugin.js]   (default: plugin/plugin.js)
 
@@ -22,6 +22,13 @@ const ACTION_ID = "view-tables";
 const ACTION_TITLE = "View tables";
 // Session object the host passes; this plugin must not depend on it.
 const SESSION = Object.freeze({});
+// Size of the hostile texts: a few relay-sized messages of one character.
+const HOSTILE_LENGTH = 65536;
+// A linear pass over HOSTILE_LENGTH takes a few milliseconds; a quadratic
+// one takes seconds. The budget sits far from both, so slow CI does not flap.
+const HOSTILE_BUDGET_MS = 500;
+// Must match the plugin's cap on drawn cells per table.
+const MAX_DRAWN_CELLS = 50_000;
 
 class SmokeFailure extends Error {
   constructor(scenario, message, details) {
@@ -153,6 +160,7 @@ const scenarios = {
       ["table inside a tilde fence", "~~~\n| a | b |\n|---|---|\n~~~", false],
       ["table after a closed fence", "```\ncode\n```\n| a | b |\n|---|---|\n| 1 | 2 |", true],
       ["indented code block", "    | a | b |\n    |---|---|", false],
+      ["tab-indented code block", "\t| a | b |\n\t|---|---|", false],
       ["table without outer pipes", "a | b\n--- | ---\n1 | 2", true],
       ["diff message", SIMPLE, false, { diff: { truncated: false } }],
       ["empty content", "", false],
@@ -192,9 +200,9 @@ const scenarios = {
   },
 
   "table body ends at a blank line or a new block"(host) {
-    const content = ["| A |", "|---|", "| 1 |", "# Heading", "| not a row |", "", "| B |", "| - |", "| 2 |", "> quote"].join("\n");
+    const content = ["| A |", "|---|", "| 1 |", "# Heading", "| not a row |", "", "| B |", "| - |", "| 2 |", "> quote", "", "| C |", "| - |", "| 3 |", "- item", "", "| D |", "| - |", "| 4 |", "1. item"].join("\n");
     const { tree } = openDialog(host, message(content));
-    expectEqual("blocks", "tables", tablesIn(tree).map((table) => table.rows), [[["1"]], [["2"]]]);
+    expectEqual("blocks", "tables", tablesIn(tree).map((table) => table.rows), [[["1"]], [["2"]], [["3"]], [["4"]]]);
   },
 
   "several tables get captions and a count"(host) {
@@ -223,6 +231,54 @@ const scenarios = {
     const { tree } = openDialog(host, message(content));
     expectEqual("inline", "texts", tablesIn(tree)[0].rows, [["bold and em and old"], ["co*de*"], ["one\ntwo\nthree"], ["https://example.com *"]]);
     expectEqual("inline", "elements", ["strong", "em", "del", "code", "br"].map((type) => findAll(tree, type).length), [1, 1, 1, 1, 2]);
+  },
+
+  "code spans follow the GFM rules"(host) {
+    const content = ["| Cell |", "|---|", "| ``foo` |", "| `  a  ` |", "| **a `**` b** |", "| ``a`b`` |"].join("\n");
+    const { tree } = openDialog(host, message(content));
+    const codes = (row) => findAll(findAll(tree, "tbody")[0].children[row], "code").map(textOf);
+    // Runs of different length do not pair; one space is trimmed per side;
+    // a code span wins over strong; a longer run may hold a shorter one.
+    expectEqual("code", "spans", [0, 1, 2, 3].map(codes), [[], [" a "], ["**"], ["a`b"]]);
+    expectEqual("code", "texts", tablesIn(tree)[0].rows, [["``foo`"], [" a "], ["**a ** b**"], ["a`b"]]);
+  },
+
+  "long hostile text stays fast"(host) {
+    const [action] = host.actions;
+    const runs = (char) => char.repeat(HOSTILE_LENGTH);
+    const wide = `${"|a".repeat(HOSTILE_LENGTH / 8)}|\n${"|-".repeat(HOSTILE_LENGTH / 8)}|\n${"a\n".repeat(HOSTILE_LENGTH / 4)}`;
+    const cell = (text) => `| a |\n| - |\n| ${text} |`;
+    const cases = {
+      pipes: [runs("|"), false],
+      dashes: [runs("-"), false],
+      "wide header with many rows": [wide, true],
+      backticks: [cell(runs("`")), true],
+      "rising backtick runs": [cell(Array.from({ length: 360 }, (_, length) => `${"`".repeat(length + 1)}a`).join("")), true],
+      autolinks: [cell("<http:".repeat(HOSTILE_LENGTH / 6)), true],
+      brackets: [cell(runs("[")), true],
+    };
+    for (const [label, [content, expected]] of Object.entries(cases)) {
+      const started = performance.now();
+      const msg = message(content);
+      expectEqual("hostile", `${label} matches`, action.matches(msg, SESSION), expected);
+      const tree = expected ? host.React.render(host.React.createElement(action.component, { message: msg, session: SESSION, close: () => undefined })) : null;
+      const elapsed = Math.round(performance.now() - started);
+      if (elapsed > HOSTILE_BUDGET_MS) throw new SmokeFailure("hostile", `${label} took ${elapsed} ms (budget ${HOSTILE_BUDGET_MS} ms)`);
+      // The wide table is drawn up to the cell cap, with a notice for the rest.
+      if (label === "wide header with many rows") {
+        const width = HOSTILE_LENGTH / 8;
+        expectEqual("hostile", "drawn cells", findAll(tree, "td").length, Math.floor(MAX_DRAWN_CELLS / width) * width);
+        expectEqual("hostile", "notice", /^Showing the first 6 of 16384 rows\./.test(textOf(findAll(tree, "p"))), true);
+      }
+    }
+  },
+
+  "each table frame is a named, focusable region"(host) {
+    const { tree } = openDialog(host, message(`${SIMPLE}\n\n| X |\n|---|\n| 1 |`));
+    const frames = findAll(tree, "div").filter((div) => div.props.tabIndex === 0);
+    expectEqual("region", "frames", frames.map((frame) => [frame.props.role, typeof frame.props["aria-labelledby"]]), [["region", "string"], ["region", "string"]]);
+    const captionIds = findAll(tree, "h3").map((caption) => caption.props.id);
+    expectEqual("region", "labels", frames.map((frame) => frame.props["aria-labelledby"]), captionIds);
   },
 
   "Close and Escape both close the dialog"(host) {
