@@ -27,8 +27,9 @@ const HOSTILE_LENGTH = 65536;
 // A linear pass over HOSTILE_LENGTH takes a few milliseconds; a quadratic
 // one takes seconds. The budget sits far from both, so slow CI does not flap.
 const HOSTILE_BUDGET_MS = 500;
-// Must match the plugin's cap on drawn cells per table.
+// Must match the plugin's caps: cells per dialog and columns per table.
 const MAX_DRAWN_CELLS = 50_000;
+const MAX_DRAWN_COLUMNS = 1_000;
 
 class SmokeFailure extends Error {
   constructor(scenario, message, details) {
@@ -264,13 +265,42 @@ const scenarios = {
       const tree = expected ? host.React.render(host.React.createElement(action.component, { message: msg, session: SESSION, close: () => undefined })) : null;
       const elapsed = Math.round(performance.now() - started);
       if (elapsed > HOSTILE_BUDGET_MS) throw new SmokeFailure("hostile", `${label} took ${elapsed} ms (budget ${HOSTILE_BUDGET_MS} ms)`);
-      // The wide table is drawn up to the cell cap, with a notice for the rest.
+      // The wide table is drawn up to the caps, with a notice for the rest.
       if (label === "wide header with many rows") {
-        const width = HOSTILE_LENGTH / 8;
-        expectEqual("hostile", "drawn cells", findAll(tree, "td").length, Math.floor(MAX_DRAWN_CELLS / width) * width);
-        expectEqual("hostile", "notice", /^Showing the first 6 of 16384 rows\./.test(textOf(findAll(tree, "p"))), true);
+        const bodyRows = Math.floor(MAX_DRAWN_CELLS / MAX_DRAWN_COLUMNS) - 1;
+        expectEqual("hostile", "drawn cells", findAll(tree, "td").length, bodyRows * MAX_DRAWN_COLUMNS);
+        expectEqual("hostile", "notice", textOf(findAll(tree, "p")).startsWith(`Showing the first ${bodyRows} of 16384 rows and the first ${MAX_DRAWN_COLUMNS} of 8192 columns.`), true);
       }
     }
+  },
+
+  "the cell cap covers header rows and the whole dialog"(host) {
+    const cellsIn = (tree) => findAll(tree, "th").length + findAll(tree, "td").length;
+    const wideRow = (width, cell) => `${`|${cell}`.repeat(width)}|`;
+    const open = (content) => openDialog(host, message(content)).tree;
+
+    // One table wider than the row of cells that the cap allows.
+    const wide = open(`${wideRow(65536, "a")}\n${wideRow(65536, "-")}\n${"a\n".repeat(100)}`);
+    expectEqual("cap", "wide table columns", findAll(wide, "th").length, MAX_DRAWN_COLUMNS);
+    expectEqual("cap", "wide table cells", cellsIn(wide), MAX_DRAWN_CELLS);
+    expectEqual("cap", "wide table notice", textOf(findAll(wide, "p")).includes(`the first ${MAX_DRAWN_COLUMNS} of 65536 columns`), true);
+
+    // Many tables that are each below the cap but far above it together.
+    const table = `${wideRow(100, "a")}\n${wideRow(100, "-")}\n${"a\n".repeat(500)}\n`;
+    const many = open(table.repeat(46));
+    if (cellsIn(many) > MAX_DRAWN_CELLS) throw new SmokeFailure("cap", `many tables drew ${cellsIn(many)} cells`);
+    expectEqual("cap", "many tables notice", textOf(findAll(many, "p")).includes("of 46 tables."), true);
+
+    // Exactly at the cap: nothing is cut and no notice shows.
+    const exact = open(`${wideRow(100, "a")}\n${wideRow(100, "-")}\n${"a\n".repeat(499)}`);
+    expectEqual("cap", "cells at the cap", cellsIn(exact), MAX_DRAWN_CELLS);
+    expectEqual("cap", "no notice at the cap", findAll(exact, "p").length, 0);
+  },
+
+  "a column with no alignment is drawn left"(host) {
+    const { tree } = openDialog(host, message("| a | b |\n|---|--:|\n| 1 | 2 |"));
+    expectEqual("align", "header", findAll(tree, "th").map((cell) => cell.props.style.textAlign), ["left", "right"]);
+    expectEqual("align", "body", findAll(tree, "td").map((cell) => cell.props.style.textAlign), ["left", "right"]);
   },
 
   "each table frame is a named, focusable region"(host) {

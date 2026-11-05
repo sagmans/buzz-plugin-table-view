@@ -64,10 +64,14 @@ const TABLE_MAX_HEIGHT = "calc(100vh - 8rem)";
 // Wide enough for a sentence, narrow enough that one long cell does not push
 // the other columns off screen.
 const CELL_MAX_WIDTH = "40em";
-// Cells drawn per table. Far above any table people write, low enough that a
-// hostile message (thousands of columns times thousands of short rows) cannot
-// freeze the app; the rest of such a table is left out with a notice.
+// Cells drawn per dialog, header cells included. Far above any table people
+// write, low enough that a hostile message (thousands of columns times
+// thousands of short rows, or many such tables) cannot freeze the app; the
+// rest is left out with a notice.
 const MAX_DRAWN_CELLS = 50_000;
+// Columns drawn per table. Without this limit, one wide table would use the
+// whole budget for its header row and show no data.
+const MAX_DRAWN_COLUMNS = 1_000;
 const ICON_SIZE = 16;
 const STYLE = Object.freeze({
   dialog: {
@@ -108,7 +112,10 @@ const STYLE = Object.freeze({
   // Natural column widths (each up to CELL_MAX_WIDTH) instead of squeezing
   // every column into the window: a squeezed column wraps after each word.
   table: { width: "max-content", borderCollapse: "collapse", fontSize: "0.875rem", lineHeight: 1.45 },
+  // GFM gives a `---` column no alignment, and the app draws such cells left.
+  // A browser centers a bare `th`, so the default is explicit here.
   th: {
+    textAlign: "left",
     position: "sticky",
     top: 0,
     background: COLOR.header,
@@ -122,6 +129,7 @@ const STYLE = Object.freeze({
     overflowWrap: "break-word",
   },
   td: {
+    textAlign: "left",
     padding: "0.4rem 0.75rem",
     borderBottom: `1px solid ${COLOR.border}`,
     borderRight: `1px solid ${COLOR.border}`,
@@ -418,21 +426,33 @@ function TableIcon(React) {
   };
 }
 
-// The body rows to draw: all of them unless the table is above MAX_DRAWN_CELLS.
-function drawnRows(table) {
-  const limit = Math.max(1, Math.floor(MAX_DRAWN_CELLS / table.header.length));
-  return table.rows.length > limit ? table.rows.slice(0, limit) : table.rows;
+// What fits of one table in the cells still free in the dialog. The header row
+// counts too, so a very wide table cannot pass the budget with its header alone.
+function drawnPart(table, budget) {
+  const columns = Math.min(table.header.length, MAX_DRAWN_COLUMNS);
+  const rowLimit = Math.max(0, Math.floor(budget / columns) - 1);
+  const rows = table.rows.length > rowLimit ? table.rows.slice(0, rowLimit) : table.rows;
+  return { columns, rows, cells: columns * (rows.length + 1) };
 }
 
-function renderTable(h, table, tableIndex, rows) {
+// Names each cut, because a cut column is easy to miss in a table that scrolls.
+function cutNotice(table, part) {
+  const cuts = [];
+  if (part.rows.length < table.rows.length) cuts.push(`the first ${part.rows.length} of ${table.rows.length} rows`);
+  if (part.columns < table.header.length) cuts.push(`the first ${part.columns} of ${table.header.length} columns`);
+  return cuts.length ? `Showing ${cuts.join(" and ")}. The table is too large to show in full.` : null;
+}
+
+function renderTable(h, table, tableIndex, part) {
   const cellStyle = (base, column) => (table.align[column] ? { ...base, textAlign: table.align[column] } : base);
+  const drawn = table.header.slice(0, part.columns);
   const head = h(
     "thead",
     null,
     h(
       "tr",
       null,
-      table.header.map((cell, column) =>
+      drawn.map((cell, column) =>
         h("th", { key: column, scope: "col", style: cellStyle(STYLE.th, column) }, renderInline(h, cell, `h${tableIndex}-${column}`)),
       ),
     ),
@@ -440,12 +460,12 @@ function renderTable(h, table, tableIndex, rows) {
   const body = h(
     "tbody",
     null,
-    rows.map((row, rowIndex) =>
+    part.rows.map((row, rowIndex) =>
       h(
         "tr",
         { key: rowIndex, style: rowIndex % 2 ? { background: COLOR.stripe } : undefined },
         // GFM pads a short row with empty cells.
-        table.header.map((_, column) =>
+        drawn.map((_, column) =>
           h("td", { key: column, style: cellStyle(STYLE.td, column) }, renderInline(h, row[column] ?? "", `b${tableIndex}-${rowIndex}-${column}`)),
         ),
       ),
@@ -454,26 +474,37 @@ function renderTable(h, table, tableIndex, rows) {
   return h("table", { style: STYLE.table }, head, body);
 }
 
-function renderSection(h, table, index, count, titleId) {
+function renderSection(h, table, index, count, titleId, part) {
   // One table needs no caption: the dialog title already names it.
   const captioned = count > 1;
   const labelId = captioned ? `${titleId}-${index}` : titleId;
-  const rows = drawnRows(table);
+  const notice = cutNotice(table, part);
   return h(
     "section",
     { key: index, style: STYLE.section, "aria-labelledby": labelId },
     captioned ? h("h3", { id: labelId, style: STYLE.caption }, `Table ${index + 1} of ${count}`) : null,
     // Focusable so keyboard users can scroll a wide table with the arrow keys.
-    h("div", { style: STYLE.scroller, tabIndex: 0, role: "region", "aria-labelledby": labelId }, renderTable(h, table, index, rows)),
-    rows.length < table.rows.length
-      ? h("p", { style: STYLE.notice }, `Showing the first ${rows.length} of ${table.rows.length} rows. The table is too large to show in full.`)
-      : null,
+    h("div", { style: STYLE.scroller, tabIndex: 0, role: "region", "aria-labelledby": labelId }, renderTable(h, table, index, part)),
+    notice ? h("p", { style: STYLE.notice }, notice) : null,
   );
 }
 
+// The budget is for the whole dialog: a short message can hold many tables, so
+// a limit per table would not keep the dialog from freezing.
 function renderSections(h, tables, titleId) {
   if (!tables.length) return h("p", { style: STYLE.empty }, "This message has no table now.");
-  return tables.map((table, index) => renderSection(h, table, index, tables.length, titleId));
+  const sections = [];
+  let budget = MAX_DRAWN_CELLS;
+  for (const table of tables) {
+    if (budget < Math.min(table.header.length, MAX_DRAWN_COLUMNS)) break;
+    const part = drawnPart(table, budget);
+    budget -= part.cells;
+    sections.push(renderSection(h, table, sections.length, tables.length, titleId, part));
+  }
+  if (sections.length < tables.length) {
+    sections.push(h("p", { key: "cut", style: STYLE.notice }, `Showing the first ${sections.length} of ${tables.length} tables. The message is too large to show in full.`));
+  }
+  return sections;
 }
 
 // Open as a modal so the dialog sits in the browser top layer above the
