@@ -73,6 +73,11 @@ const MAX_DRAWN_CELLS = 50_000;
 // whole budget for its header row and show no data.
 const MAX_DRAWN_COLUMNS = 1_000;
 const ICON_SIZE = 16;
+// The macOS app draws its window controls over the page, at the top left. The
+// dialog fills the window, so its title starts after them; the app's own header
+// reserves about the same width.
+const MAC_WINDOW_CONTROLS_INSET = "6rem";
+const MAC_PLATFORM_RE = /Mac/i;
 const STYLE = Object.freeze({
   dialog: {
     width: "100vw",
@@ -443,6 +448,12 @@ function cutNotice(table, part) {
   return cuts.length ? `Showing ${cuts.join(" and ")}. The table is too large to show in full.` : null;
 }
 
+// Same test as the app shell: Tauri on Mac. A browser or another desktop system
+// has no controls over the page, so it needs no inset.
+function hasMacWindowControls() {
+  return Boolean(globalThis.isTauri) && MAC_PLATFORM_RE.test(globalThis.navigator?.platform ?? "");
+}
+
 function renderTable(h, table, tableIndex, part) {
   const cellStyle = (base, column) => (table.align[column] ? { ...base, textAlign: table.align[column] } : base);
   const drawn = table.header.slice(0, part.columns);
@@ -540,7 +551,7 @@ function TablesDialog(React, tablesOf) {
         { style: STYLE.frame },
         h(
           "header",
-          { style: STYLE.bar },
+          { style: hasMacWindowControls() ? { ...STYLE.bar, paddingLeft: MAC_WINDOW_CONTROLS_INSET } : STYLE.bar },
           h("h2", { id: titleId, style: STYLE.title }, tables.length === 1 ? "Table" : `Tables (${tables.length})`),
           h("button", { type: "button", style: STYLE.close, onClick: close, autoFocus: true }, "Close"),
         ),

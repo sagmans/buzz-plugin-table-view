@@ -297,6 +297,23 @@ const scenarios = {
     expectEqual("cap", "no notice at the cap", findAll(exact, "p").length, 0);
   },
 
+  "the title clears the macOS window controls only in the macOS app"(host) {
+    const insetFor = (isTauri, platform) => {
+      const saved = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+      Object.defineProperty(globalThis, "navigator", { configurable: true, value: { platform } });
+      globalThis.isTauri = isTauri;
+      try {
+        return findAll(openDialog(host, message(SIMPLE)).tree, "header")[0].props.style.paddingLeft ?? null;
+      } finally {
+        delete globalThis.isTauri;
+        Object.defineProperty(globalThis, "navigator", saved);
+      }
+    };
+    if (!insetFor(true, "MacIntel")) throw new SmokeFailure("controls", "the macOS app needs a title inset");
+    expectEqual("controls", "browser on a Mac", insetFor(false, "MacIntel"), null);
+    expectEqual("controls", "app on Linux", insetFor(true, "Linux x86_64"), null);
+  },
+
   "a column with no alignment is drawn left"(host) {
     const { tree } = openDialog(host, message("| a | b |\n|---|--:|\n| 1 | 2 |"));
     expectEqual("align", "header", findAll(tree, "th").map((cell) => cell.props.style.textAlign), ["left", "right"]);
