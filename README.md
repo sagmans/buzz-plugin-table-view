@@ -16,7 +16,8 @@ message **⋯** menu:
   each table, for example "Table 2 of 3".
 - Each table scrolls in its own frame. Its header row stays visible while
   you scroll down.
-- The column alignment of the table (`:---`, `:---:`, `---:`) is kept.
+- The column alignment of the table (`:---`, `:---:`, `---:`) is kept. A
+  `---` column shows at the left, as in the message.
 - Select **Close** or push **Escape** to close the dialog.
 
 The dialog uses the colors of the app theme, in light and dark mode.
@@ -80,10 +81,12 @@ The Buzz mobile app runs no plugins. On mobile, the message menu has no
 - Buzz plugins cannot add a button to each table in a message. The entry is
   in the message menu and opens all tables of the message.
 - The parser follows the GFM table rules for common text. A table inside a
-  block quote or a list item gets no entry.
-- The dialog draws up to 50,000 cells of each table. A larger table shows
-  its first rows and a notice. This keeps a very large or hostile message
-  from freezing the app.
+  block quote gets no entry. A table in a list item gets an entry only when
+  it starts on its own line, with an indent of up to 3 spaces.
+- The dialog draws up to 50,000 cells for each message, header cells
+  included, and up to 1,000 columns of each table. A larger table or message
+  shows its first part and a notice. This keeps a very large or hostile
+  message from freezing the app.
 
 ## Security
 
