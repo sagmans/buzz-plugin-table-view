@@ -21,23 +21,28 @@ const LOG_PREFIX = "[table-view]";
 // matches() runs for each visible row on every render; remember this many
 // parsed messages so scrolling does not parse the same text again.
 const MAX_CACHED_MESSAGES = 500;
-// GFM: up to three spaces of indent; four or more make an indented code block.
+// GFM: up to three columns of indent; four or more make an indented code block.
 const MAX_BLOCK_INDENT = 3;
+// GFM tab stops: a leading tab moves the indent to the next multiple of four.
+const TAB_STOP = 4;
 // GFM fenced code: a run of three or more backticks or tildes opens a fence.
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 // Lines that start another block end a table body (GFM "beginning of another
-// block-level structure"): ATX heading, block quote, fence, thematic break.
-const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|>|`{3,}|~{3,}|([-*_])(\s*\3){2,}\s*$)/;
+// block-level structure"): ATX heading, block quote, fence, thematic break
+// and list item.
+const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|>|`{3,}|~{3,}|([-*_])(\s*\3){2,}\s*$|[-+*]\s|\d{1,9}[.)]\s)/;
 const DELIMITER_CELL_RE = /^:?-+:?$/;
 const ESCAPED_PIPE_RE = /\\\|/g;
-// Quick text test before a full parse: a delimiter row always has a pipe and a dash.
-const TABLE_HINT_RE = /\|[^\n]*-|-[^\n]*\|/;
-// Inline Markdown that a cell may hold. Each match draws as text in a React
-// element of the plugin, never as HTML: code span, strong, strikethrough,
-// emphasis, link (label only; one level of balanced parentheses in the
-// address, as CommonMark allows), autolink and a backslash escape.
+// Inline Markdown that a cell may hold, outside code spans. Each match draws
+// as text in a React element of the plugin, never as HTML: strong,
+// strikethrough, emphasis, link (label only; one level of balanced
+// parentheses in the address, as CommonMark allows), autolink and a
+// backslash escape. Message text is untrusted and can be long, so no
+// alternative may scan past the next opener of its own kind (`[`, `<`):
+// that keeps each match attempt short and the whole pass near linear.
 const INLINE_RE =
-  /(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*([^*\s](?:[^*]*[^*\s])?)\*|\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)|<((?:https?|mailto):[^>\s]+)>|\\([!-/:-@[-`{-~])/g;
+  /\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*([^*\s](?:[^*]*[^*\s])?)\*|\[([^[\]]*)\]\((?:[^()[\]]|\([^()[\]]*\))*\)|<((?:https?|mailto):[^<>\s]+)>|\\([!-/:-@[-`{-~])/g;
+const BACKTICK = "`";
 const LINE_BREAK_RE = /<br\s*\/?>/gi;
 const ALIGN = Object.freeze({ LEFT: "left", CENTER: "center", RIGHT: "right" });
 
@@ -59,6 +64,10 @@ const TABLE_MAX_HEIGHT = "calc(100vh - 8rem)";
 // Wide enough for a sentence, narrow enough that one long cell does not push
 // the other columns off screen.
 const CELL_MAX_WIDTH = "40em";
+// Cells drawn per table. Far above any table people write, low enough that a
+// hostile message (thousands of columns times thousands of short rows) cannot
+// freeze the app; the rest of such a table is left out with a notice.
+const MAX_DRAWN_CELLS = 50_000;
 const ICON_SIZE = 16;
 const STYLE = Object.freeze({
   dialog: {
@@ -122,12 +131,20 @@ const STYLE = Object.freeze({
   },
   code: { fontFamily: MONO_FONT, fontSize: "0.92em" },
   empty: { color: COLOR.muted },
+  notice: { margin: "0.5rem 0 0", fontSize: "0.875rem", color: COLOR.muted },
 });
 
 // ---- GFM table parser -----------------------------------------------------------
 
-function leadingSpaces(line) {
-  return line.length - line.trimStart().length;
+// Indent in columns, so a leading tab counts as GFM counts it.
+function indentWidth(line) {
+  let width = 0;
+  for (const char of line) {
+    if (char === " ") width += 1;
+    else if (char === "\t") width += TAB_STOP - (width % TAB_STOP);
+    else break;
+  }
+  return width;
 }
 
 // Split one table row on pipes that are not escaped. GFM keeps `\|` as a
@@ -165,20 +182,13 @@ function cellAlign(cell) {
 // The delimiter row decides that the line above is a table header. It
 // returns the column alignments, or null when the line is no delimiter row.
 function parseDelimiter(line) {
-  if (!line.includes("|") || leadingSpaces(line) > MAX_BLOCK_INDENT) return null;
+  if (!line.includes("|") || indentWidth(line) > MAX_BLOCK_INDENT) return null;
   const cells = splitRow(line);
   return cells.every((cell) => DELIMITER_CELL_RE.test(cell)) ? cells.map(cellAlign) : null;
 }
 
 function isHeaderCandidate(line) {
-  return line.includes("|") && leadingSpaces(line) <= MAX_BLOCK_INDENT && !BLOCK_START_RE.test(line);
-}
-
-// GFM: a body row with fewer cells is padded, extra cells are dropped.
-function fitRow(cells, width) {
-  const row = cells.slice(0, width);
-  while (row.length < width) row.push("");
-  return row;
+  return line.includes("|") && indentWidth(line) <= MAX_BLOCK_INDENT && !BLOCK_START_RE.test(line);
 }
 
 // Read the body rows that follow a delimiter row; returns the rows and the
@@ -189,7 +199,9 @@ function readBody(lines, start, width) {
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim() || BLOCK_START_RE.test(line)) break;
-    rows.push(fitRow(splitRow(line), width));
+    // GFM drops extra cells. Short rows are padded only when drawn, so the
+    // parse that runs for every visible row stays linear in the text size.
+    rows.push(splitRow(line).slice(0, width));
     index += 1;
   }
   return { rows, next: index };
@@ -227,7 +239,8 @@ function tableAt(lines, index) {
  * Markdown text, drawn later by `renderInline` as React text only.
  */
 export function findTables(markdown) {
-  if (typeof markdown !== "string" || !TABLE_HINT_RE.test(markdown)) return [];
+  // A delimiter row always holds a pipe and a dash; skip text without both.
+  if (typeof markdown !== "string" || !markdown.includes("|") || !markdown.includes("-")) return [];
   const lines = markdown.split(/\r\n|\n|\r/);
   const tables = [];
   let fence = null;
@@ -286,9 +299,65 @@ function withLineBreaks(h, text, keyPrefix) {
   return nodes;
 }
 
+// Backtick runs of a text, in order. One pass with indexOf keeps it linear.
+function backtickRuns(text) {
+  const runs = [];
+  let start = text.indexOf(BACKTICK);
+  while (start !== -1) {
+    let end = start;
+    while (text[end] === BACKTICK) end += 1;
+    runs.push({ start, length: end - start });
+    start = text.indexOf(BACKTICK, end);
+  }
+  return runs;
+}
+
+// For each run, the index of the next run of the same length, or -1. GFM
+// closes a code span only with a run of exactly the opener's length; one
+// backward pass finds every closer without a rescan per opener.
+function closingRuns(runs) {
+  const next = new Array(runs.length).fill(-1);
+  const seen = new Map();
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    next[index] = seen.get(runs[index].length) ?? -1;
+    seen.set(runs[index].length, index);
+  }
+  return next;
+}
+
+// GFM strips one space from each side when both sides have one, unless the
+// span holds only spaces.
+function codeContent(raw) {
+  return raw.startsWith(" ") && raw.endsWith(" ") && raw.trim() ? raw.slice(1, -1) : raw;
+}
+
+// Split a cell into code spans and other text. Code spans come first because
+// GFM gives them precedence over every other inline construct. A run with no
+// closer stays literal text.
+function splitCodeSpans(text) {
+  const runs = backtickRuns(text);
+  const next = closingRuns(runs);
+  const segments = [];
+  let last = 0;
+  let index = 0;
+  while (index < runs.length) {
+    const close = next[index];
+    if (close === -1) {
+      index += 1;
+      continue;
+    }
+    const open = runs[index];
+    if (open.start > last) segments.push({ code: false, text: text.slice(last, open.start) });
+    segments.push({ code: true, text: codeContent(text.slice(open.start + open.length, runs[close].start)) });
+    last = runs[close].start + runs[close].length;
+    index = close + 1;
+  }
+  if (last < text.length) segments.push({ code: false, text: text.slice(last) });
+  return segments;
+}
+
 function inlineNode(h, match, key) {
-  const [, , code, strong, strongAlt, strike, em, linkLabel, autolink, escaped] = match;
-  if (code !== undefined) return h("code", { key, style: STYLE.code }, code.trim() || code);
+  const [, strong, strongAlt, strike, em, linkLabel, autolink, escaped] = match;
   if (strong !== undefined || strongAlt !== undefined) return h("strong", { key }, renderInline(h, strong ?? strongAlt, key));
   if (strike !== undefined) return h("del", { key }, renderInline(h, strike, key));
   if (em !== undefined) return h("em", { key }, renderInline(h, em, key));
@@ -303,6 +372,17 @@ function inlineNode(h, match, key) {
  * text nodes, which React escapes, so cell text can never become HTML.
  */
 export function renderInline(h, text, keyPrefix = "c") {
+  const nodes = [];
+  splitCodeSpans(text).forEach((segment, index) => {
+    const key = `${keyPrefix}s${index}`;
+    if (segment.code) nodes.push(h("code", { key, style: STYLE.code }, segment.text));
+    else nodes.push(...renderFormatted(h, segment.text, key));
+  });
+  return nodes;
+}
+
+// Strong, emphasis, links and escapes of text that holds no code span.
+function renderFormatted(h, text, keyPrefix) {
   const nodes = [];
   let last = 0;
   let count = 0;
@@ -338,7 +418,13 @@ function TableIcon(React) {
   };
 }
 
-function renderTable(h, table, tableIndex) {
+// The body rows to draw: all of them unless the table is above MAX_DRAWN_CELLS.
+function drawnRows(table) {
+  const limit = Math.max(1, Math.floor(MAX_DRAWN_CELLS / table.header.length));
+  return table.rows.length > limit ? table.rows.slice(0, limit) : table.rows;
+}
+
+function renderTable(h, table, tableIndex, rows) {
   const cellStyle = (base, column) => (table.align[column] ? { ...base, textAlign: table.align[column] } : base);
   const head = h(
     "thead",
@@ -354,12 +440,13 @@ function renderTable(h, table, tableIndex) {
   const body = h(
     "tbody",
     null,
-    table.rows.map((row, rowIndex) =>
+    rows.map((row, rowIndex) =>
       h(
         "tr",
         { key: rowIndex, style: rowIndex % 2 ? { background: COLOR.stripe } : undefined },
-        row.map((cell, column) =>
-          h("td", { key: column, style: cellStyle(STYLE.td, column) }, renderInline(h, cell, `b${tableIndex}-${rowIndex}-${column}`)),
+        // GFM pads a short row with empty cells.
+        table.header.map((_, column) =>
+          h("td", { key: column, style: cellStyle(STYLE.td, column) }, renderInline(h, row[column] ?? "", `b${tableIndex}-${rowIndex}-${column}`)),
         ),
       ),
     ),
@@ -367,19 +454,26 @@ function renderTable(h, table, tableIndex) {
   return h("table", { style: STYLE.table }, head, body);
 }
 
+function renderSection(h, table, index, count, titleId) {
+  // One table needs no caption: the dialog title already names it.
+  const captioned = count > 1;
+  const labelId = captioned ? `${titleId}-${index}` : titleId;
+  const rows = drawnRows(table);
+  return h(
+    "section",
+    { key: index, style: STYLE.section, "aria-labelledby": labelId },
+    captioned ? h("h3", { id: labelId, style: STYLE.caption }, `Table ${index + 1} of ${count}`) : null,
+    // Focusable so keyboard users can scroll a wide table with the arrow keys.
+    h("div", { style: STYLE.scroller, tabIndex: 0, role: "region", "aria-labelledby": labelId }, renderTable(h, table, index, rows)),
+    rows.length < table.rows.length
+      ? h("p", { style: STYLE.notice }, `Showing the first ${rows.length} of ${table.rows.length} rows. The table is too large to show in full.`)
+      : null,
+  );
+}
+
 function renderSections(h, tables, titleId) {
   if (!tables.length) return h("p", { style: STYLE.empty }, "This message has no table now.");
-  // One table needs no caption: the dialog title already names it.
-  const captioned = tables.length > 1;
-  return tables.map((table, index) =>
-    h(
-      "section",
-      { key: index, style: STYLE.section, "aria-labelledby": captioned ? `${titleId}-${index}` : titleId },
-      captioned ? h("h3", { id: `${titleId}-${index}`, style: STYLE.caption }, `Table ${index + 1} of ${tables.length}`) : null,
-      // Focusable so keyboard users can scroll a wide table with the arrow keys.
-      h("div", { style: STYLE.scroller, tabIndex: 0 }, renderTable(h, table, index)),
-    ),
-  );
+  return tables.map((table, index) => renderSection(h, table, index, tables.length, titleId));
 }
 
 // Open as a modal so the dialog sits in the browser top layer above the
