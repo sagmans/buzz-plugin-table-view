@@ -109,8 +109,9 @@ The Buzz mobile app runs no plugins. On mobile, the message menu has no
 
 1. After you clone, run `scripts/setup-hooks` once. It turns on the Git
    hooks of this repository.
-2. Install the tools that the hooks use: `gitleaks`, `node`, `shellcheck`,
-   `shfmt`, `markdownlint-cli2`, `lizard`, `semgrep` and `trivy`.
+2. Run `mise install` for the pinned tools in `mise.toml` (`node`, `biome`,
+   `shfmt`, `markdownlint-cli2`, `lizard`), and keep `shellcheck`, `gitleaks`,
+   `semgrep` and `trivy` on `PATH`.
 3. Run `scripts/check` before you push. It runs the smoke scenarios
    (`node scripts/smoke.mjs`), the linters and the scanners.
 4. Sign each commit and add a sign-off: `git commit -s -S`. The commit

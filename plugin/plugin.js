@@ -30,7 +30,8 @@ const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 // Lines that start another block end a table body (GFM "beginning of another
 // block-level structure"): ATX heading, block quote, fence, thematic break
 // and list item.
-const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|>|`{3,}|~{3,}|([-*_])(\s*\3){2,}\s*$|[-+*]\s|\d{1,9}[.)]\s)/;
+const BLOCK_START_RE =
+  /^ {0,3}(#{1,6}(\s|$)|>|`{3,}|~{3,}|([-*_])(\s*\3){2,}\s*$|[-+*]\s|\d{1,9}[.)]\s)/;
 const DELIMITER_CELL_RE = /^:?-+:?$/;
 const ESCAPED_PIPE_RE = /\\\|/g;
 // Inline Markdown that a cell may hold, outside code spans. Each match draws
@@ -113,10 +114,22 @@ const STYLE = Object.freeze({
   section: { marginBottom: "1.5rem" },
   caption: { margin: "0 0 0.5rem", fontSize: "0.875rem", fontWeight: 600, color: COLOR.muted },
   // The frame hugs a narrow table and stops at the dialog width for a wide one.
-  scroller: { width: "fit-content", maxWidth: "100%", overflow: "auto", maxHeight: TABLE_MAX_HEIGHT, border: `1px solid ${COLOR.border}`, borderRadius: "6px" },
+  scroller: {
+    width: "fit-content",
+    maxWidth: "100%",
+    overflow: "auto",
+    maxHeight: TABLE_MAX_HEIGHT,
+    border: `1px solid ${COLOR.border}`,
+    borderRadius: "6px",
+  },
   // Natural column widths (each up to CELL_MAX_WIDTH) instead of squeezing
   // every column into the window: a squeezed column wraps after each word.
-  table: { width: "max-content", borderCollapse: "collapse", fontSize: "0.875rem", lineHeight: 1.45 },
+  table: {
+    width: "max-content",
+    borderCollapse: "collapse",
+    fontSize: "0.875rem",
+    lineHeight: 1.45,
+  },
   // GFM gives a `---` column no alignment, and the app draws such cells left.
   // A browser centers a bare `th`, so the default is explicit here.
   th: {
@@ -230,7 +243,8 @@ function nextFence(line, fence) {
     const marker = match[1];
     return marker[0] === "`" && match[2].includes("`") ? null : marker;
   }
-  const closes = match && match[1][0] === fence[0] && match[1].length >= fence.length && !match[2].trim();
+  const closes =
+    match && match[1][0] === fence[0] && match[1].length >= fence.length && !match[2].trim();
   return closes ? null : fence;
 }
 
@@ -361,7 +375,10 @@ function splitCodeSpans(text) {
     }
     const open = runs[index];
     if (open.start > last) segments.push({ code: false, text: text.slice(last, open.start) });
-    segments.push({ code: true, text: codeContent(text.slice(open.start + open.length, runs[close].start)) });
+    segments.push({
+      code: true,
+      text: codeContent(text.slice(open.start + open.length, runs[close].start)),
+    });
     last = runs[close].start + runs[close].length;
     index = close + 1;
   }
@@ -371,7 +388,8 @@ function splitCodeSpans(text) {
 
 function inlineNode(h, match, key) {
   const [, strong, strongAlt, strike, em, linkLabel, autolink, escaped] = match;
-  if (strong !== undefined || strongAlt !== undefined) return h("strong", { key }, renderInline(h, strong ?? strongAlt, key));
+  if (strong !== undefined || strongAlt !== undefined)
+    return h("strong", { key }, renderInline(h, strong ?? strongAlt, key));
   if (strike !== undefined) return h("del", { key }, renderInline(h, strike, key));
   if (em !== undefined) return h("em", { key }, renderInline(h, em, key));
   // Links draw as their label only: a cell must not open an address that a
@@ -400,12 +418,14 @@ function renderFormatted(h, text, keyPrefix) {
   let last = 0;
   let count = 0;
   for (const match of text.matchAll(INLINE_RE)) {
-    if (match.index > last) nodes.push(...withLineBreaks(h, text.slice(last, match.index), `${keyPrefix}t${count}`));
+    if (match.index > last)
+      nodes.push(...withLineBreaks(h, text.slice(last, match.index), `${keyPrefix}t${count}`));
     nodes.push(inlineNode(h, match, `${keyPrefix}i${count}`));
     last = match.index + match[0].length;
     count += 1;
   }
-  if (last < text.length) nodes.push(...withLineBreaks(h, text.slice(last), `${keyPrefix}t${count}`));
+  if (last < text.length)
+    nodes.push(...withLineBreaks(h, text.slice(last), `${keyPrefix}t${count}`));
   return nodes;
 }
 
@@ -443,9 +463,13 @@ function drawnPart(table, budget) {
 // Names each cut, because a cut column is easy to miss in a table that scrolls.
 function cutNotice(table, part) {
   const cuts = [];
-  if (part.rows.length < table.rows.length) cuts.push(`the first ${part.rows.length} of ${table.rows.length} rows`);
-  if (part.columns < table.header.length) cuts.push(`the first ${part.columns} of ${table.header.length} columns`);
-  return cuts.length ? `Showing ${cuts.join(" and ")}. The table is too large to show in full.` : null;
+  if (part.rows.length < table.rows.length)
+    cuts.push(`the first ${part.rows.length} of ${table.rows.length} rows`);
+  if (part.columns < table.header.length)
+    cuts.push(`the first ${part.columns} of ${table.header.length} columns`);
+  return cuts.length
+    ? `Showing ${cuts.join(" and ")}. The table is too large to show in full.`
+    : null;
 }
 
 // Same test as the app shell: Tauri on Mac. A browser or another desktop system
@@ -455,7 +479,8 @@ function hasMacWindowControls() {
 }
 
 function renderTable(h, table, tableIndex, part) {
-  const cellStyle = (base, column) => (table.align[column] ? { ...base, textAlign: table.align[column] } : base);
+  const cellStyle = (base, column) =>
+    table.align[column] ? { ...base, textAlign: table.align[column] } : base;
   const drawn = table.header.slice(0, part.columns);
   const head = h(
     "thead",
@@ -464,7 +489,11 @@ function renderTable(h, table, tableIndex, part) {
       "tr",
       null,
       drawn.map((cell, column) =>
-        h("th", { key: column, scope: "col", style: cellStyle(STYLE.th, column) }, renderInline(h, cell, `h${tableIndex}-${column}`)),
+        h(
+          "th",
+          { key: column, scope: "col", style: cellStyle(STYLE.th, column) },
+          renderInline(h, cell, `h${tableIndex}-${column}`),
+        ),
       ),
     ),
   );
@@ -477,7 +506,11 @@ function renderTable(h, table, tableIndex, part) {
         { key: rowIndex, style: rowIndex % 2 ? { background: COLOR.stripe } : undefined },
         // GFM pads a short row with empty cells.
         drawn.map((_, column) =>
-          h("td", { key: column, style: cellStyle(STYLE.td, column) }, renderInline(h, row[column] ?? "", `b${tableIndex}-${rowIndex}-${column}`)),
+          h(
+            "td",
+            { key: column, style: cellStyle(STYLE.td, column) },
+            renderInline(h, row[column] ?? "", `b${tableIndex}-${rowIndex}-${column}`),
+          ),
         ),
       ),
     ),
@@ -493,9 +526,15 @@ function renderSection(h, table, index, count, titleId, part) {
   return h(
     "section",
     { key: index, style: STYLE.section, "aria-labelledby": labelId },
-    captioned ? h("h3", { id: labelId, style: STYLE.caption }, `Table ${index + 1} of ${count}`) : null,
+    captioned
+      ? h("h3", { id: labelId, style: STYLE.caption }, `Table ${index + 1} of ${count}`)
+      : null,
     // Focusable so keyboard users can scroll a wide table with the arrow keys.
-    h("div", { style: STYLE.scroller, tabIndex: 0, role: "region", "aria-labelledby": labelId }, renderTable(h, table, index, part)),
+    h(
+      "div",
+      { style: STYLE.scroller, tabIndex: 0, role: "region", "aria-labelledby": labelId },
+      renderTable(h, table, index, part),
+    ),
     notice ? h("p", { style: STYLE.notice }, notice) : null,
   );
 }
@@ -513,7 +552,13 @@ function renderSections(h, tables, titleId) {
     sections.push(renderSection(h, table, sections.length, tables.length, titleId, part));
   }
   if (sections.length < tables.length) {
-    sections.push(h("p", { key: "cut", style: STYLE.notice }, `Showing the first ${sections.length} of ${tables.length} tables. The message is too large to show in full.`));
+    sections.push(
+      h(
+        "p",
+        { key: "cut", style: STYLE.notice },
+        `Showing the first ${sections.length} of ${tables.length} tables. The message is too large to show in full.`,
+      ),
+    );
   }
   return sections;
 }
@@ -551,9 +596,21 @@ function TablesDialog(React, tablesOf) {
         { style: STYLE.frame },
         h(
           "header",
-          { style: hasMacWindowControls() ? { ...STYLE.bar, paddingLeft: MAC_WINDOW_CONTROLS_INSET } : STYLE.bar },
-          h("h2", { id: titleId, style: STYLE.title }, tables.length === 1 ? "Table" : `Tables (${tables.length})`),
-          h("button", { type: "button", style: STYLE.close, onClick: close, autoFocus: true }, "Close"),
+          {
+            style: hasMacWindowControls()
+              ? { ...STYLE.bar, paddingLeft: MAC_WINDOW_CONTROLS_INSET }
+              : STYLE.bar,
+          },
+          h(
+            "h2",
+            { id: titleId, style: STYLE.title },
+            tables.length === 1 ? "Table" : `Tables (${tables.length})`,
+          ),
+          h(
+            "button",
+            { type: "button", style: STYLE.close, onClick: close, autoFocus: true },
+            "Close",
+          ),
         ),
         h("div", { style: STYLE.body }, renderSections(h, tables, titleId)),
       ),

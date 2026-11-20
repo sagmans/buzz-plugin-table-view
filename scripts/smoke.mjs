@@ -52,7 +52,11 @@ function createReact() {
   };
   const React = {
     effects: [],
-    createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
+    createElement: (type, props, ...children) => ({
+      type,
+      props: props ?? {},
+      children: children.flat(Infinity),
+    }),
     useRef: (initial) => slot(() => ({ current: initial })),
     useMemo: (factory) => factory(),
     useId: () => slot(() => `:r${ids++}:`),
@@ -75,10 +79,13 @@ function createReact() {
 // ---- Tree helpers -------------------------------------------------------------------
 
 function walk(node, visit) {
-  if (Array.isArray(node)) return node.forEach((child) => walk(child, visit));
+  if (Array.isArray(node)) {
+    for (const child of node) walk(child, visit);
+    return;
+  }
   if (!node || typeof node !== "object") return;
   visit(node);
-  node.children.forEach((child) => walk(child, visit));
+  for (const child of node.children) walk(child, visit);
 }
 
 function findAll(node, type) {
@@ -113,14 +120,29 @@ async function loadPlugin(pluginPath) {
 }
 
 let nextId = 0;
-const message = (content, extra = {}) => ({ id: `message-${nextId++}`, channelId: "channel", authorId: "author", createdAt: 0, content, ...extra });
+const message = (content, extra = {}) => ({
+  id: `message-${nextId++}`,
+  channelId: "channel",
+  authorId: "author",
+  createdAt: 0,
+  content,
+  ...extra,
+});
 
 // Open the dialog as the host does after the menu click, and return its tree.
 function openDialog(host, msg) {
   const [action] = host.actions;
   const closed = [];
   host.React.effects.length = 0;
-  const tree = host.React.render(host.React.createElement(action.component, { message: msg, session: SESSION, close: () => closed.push(true), canOpen: () => false, open: () => undefined }));
+  const tree = host.React.render(
+    host.React.createElement(action.component, {
+      message: msg,
+      session: SESSION,
+      close: () => closed.push(true),
+      canOpen: () => false,
+      open: () => undefined,
+    }),
+  );
   return { tree, closed, effects: [...host.React.effects] };
 }
 
@@ -128,24 +150,37 @@ function tablesIn(tree) {
   return findAll(tree, "table").map((table) => ({
     header: findAll(table, "th").map((cell) => textOf(cell)),
     align: findAll(table, "th").map((cell) => cell.props.style?.textAlign ?? null),
-    rows: findAll(table, "tbody").flatMap((body) => findAll(body, "tr").map((row) => findAll(row, "td").map((cell) => textOf(cell)))),
+    rows: findAll(table, "tbody").flatMap((body) =>
+      findAll(body, "tr").map((row) => findAll(row, "td").map((cell) => textOf(cell))),
+    ),
   }));
 }
 
 function expectEqual(scenario, label, actual, expected) {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new SmokeFailure(scenario, `${label} differs`, { actual, expected });
+  if (JSON.stringify(actual) !== JSON.stringify(expected))
+    throw new SmokeFailure(scenario, `${label} differs`, { actual, expected });
 }
 
 // ---- Scenarios --------------------------------------------------------------------------
 
-const SIMPLE = ["Intro text.", "", "| Name | Size | Note |", "| :--- | ---: | :---: |", "| a | 1 | x |", "| b | 22 | y |", "", "After."].join("\n");
+const SIMPLE = [
+  "Intro text.",
+  "",
+  "| Name | Size | Note |",
+  "| :--- | ---: | :---: |",
+  "| a | 1 | x |",
+  "| b | 22 | y |",
+  "",
+  "After.",
+].join("\n");
 
 const scenarios = {
   "registers one View tables entry"(host) {
     expectEqual("register", "action count", host.actions.length, 1);
     const [action] = host.actions;
     expectEqual("register", "id and title", [action.id, action.title], [ACTION_ID, ACTION_TITLE]);
-    if (typeof action.icon !== "function") throw new SmokeFailure("register", "icon must be a component");
+    if (typeof action.icon !== "function")
+      throw new SmokeFailure("register", "icon must be a component");
     const icon = host.React.render(host.React.createElement(action.icon));
     expectEqual("register", "icon is decorative", icon.props["aria-hidden"], "true");
   },
@@ -169,7 +204,12 @@ const scenarios = {
     for (const [label, content, expected, extra] of cases) {
       expectEqual("matches", label, action.matches(message(content, extra), SESSION), expected);
     }
-    expectEqual("matches", "non-string content", action.matches({ id: "odd", content: 42 }, SESSION), false);
+    expectEqual(
+      "matches",
+      "non-string content",
+      action.matches({ id: "odd", content: 42 }, SESSION),
+      false,
+    );
     expectEqual("matches", "missing message", action.matches(undefined, SESSION), false);
   },
 
@@ -178,15 +218,28 @@ const scenarios = {
     const msg = message("no table yet");
     expectEqual("edit", "before edit", action.matches(msg, SESSION), false);
     expectEqual("edit", "after edit", action.matches({ ...msg, content: SIMPLE }, SESSION), true);
-    expectEqual("edit", "table removed", action.matches({ ...msg, content: "gone" }, SESSION), false);
+    expectEqual(
+      "edit",
+      "table removed",
+      action.matches({ ...msg, content: "gone" }, SESSION),
+      false,
+    );
   },
 
   "dialog shows the table with alignment"(host) {
     const { tree, effects } = openDialog(host, message(SIMPLE));
     expectEqual("dialog", "root element", tree.type, "dialog");
-    if (!effects.length) throw new SmokeFailure("dialog", "the dialog must open itself as a modal in an effect");
+    if (!effects.length)
+      throw new SmokeFailure("dialog", "the dialog must open itself as a modal in an effect");
     expectEqual("dialog", "tables", tablesIn(tree), [
-      { header: ["Name", "Size", "Note"], align: ["left", "right", "center"], rows: [["a", "1", "x"], ["b", "22", "y"]] },
+      {
+        header: ["Name", "Size", "Note"],
+        align: ["left", "right", "center"],
+        rows: [
+          ["a", "1", "x"],
+          ["b", "22", "y"],
+        ],
+      },
     ]);
     expectEqual("dialog", "title", textOf(findAll(tree, "h2")), "Table");
     expectEqual("dialog", "no caption for one table", findAll(tree, "h3").length, 0);
@@ -195,15 +248,51 @@ const scenarios = {
   },
 
   "rows are fitted and pipes unescaped"(host) {
-    const content = ["| A | B |", "|---|---|", "| only |", "| 1 | 2 | 3 |", "| x \\| y | `a\\|b` |"].join("\n");
+    const content = [
+      "| A | B |",
+      "|---|---|",
+      "| only |",
+      "| 1 | 2 | 3 |",
+      "| x \\| y | `a\\|b` |",
+    ].join("\n");
     const { tree } = openDialog(host, message(content));
-    expectEqual("fit", "rows", tablesIn(tree)[0].rows, [["only", ""], ["1", "2"], ["x | y", "a|b"]]);
+    expectEqual("fit", "rows", tablesIn(tree)[0].rows, [
+      ["only", ""],
+      ["1", "2"],
+      ["x | y", "a|b"],
+    ]);
   },
 
   "table body ends at a blank line or a new block"(host) {
-    const content = ["| A |", "|---|", "| 1 |", "# Heading", "| not a row |", "", "| B |", "| - |", "| 2 |", "> quote", "", "| C |", "| - |", "| 3 |", "- item", "", "| D |", "| - |", "| 4 |", "1. item"].join("\n");
+    const content = [
+      "| A |",
+      "|---|",
+      "| 1 |",
+      "# Heading",
+      "| not a row |",
+      "",
+      "| B |",
+      "| - |",
+      "| 2 |",
+      "> quote",
+      "",
+      "| C |",
+      "| - |",
+      "| 3 |",
+      "- item",
+      "",
+      "| D |",
+      "| - |",
+      "| 4 |",
+      "1. item",
+    ].join("\n");
     const { tree } = openDialog(host, message(content));
-    expectEqual("blocks", "tables", tablesIn(tree).map((table) => table.rows), [[["1"]], [["2"]], [["3"]], [["4"]]]);
+    expectEqual(
+      "blocks",
+      "tables",
+      tablesIn(tree).map((table) => table.rows),
+      [[["1"]], [["2"]], [["3"]], [["4"]]],
+    );
   },
 
   "several tables get captions and a count"(host) {
@@ -211,37 +300,79 @@ const scenarios = {
     const { tree } = openDialog(host, message(content));
     expectEqual("several", "table count", tablesIn(tree).length, 2);
     expectEqual("several", "title", textOf(findAll(tree, "h2")), "Tables (2)");
-    expectEqual("several", "captions", findAll(tree, "h3").map(textOf), ["Table 1 of 2", "Table 2 of 2"]);
+    expectEqual("several", "captions", findAll(tree, "h3").map(textOf), [
+      "Table 1 of 2",
+      "Table 2 of 2",
+    ]);
   },
 
   "cell text never becomes HTML or a link"(host) {
     const payload = '<img src=x onerror="globalThis.pwned=1">';
-    const content = ["| Raw | Link | Script |", "|---|---|---|", `| ${payload} | [click](javascript:alert(1)) | <script>alert(1)</script> |`].join("\n");
+    const content = [
+      "| Raw | Link | Script |",
+      "|---|---|---|",
+      `| ${payload} | [click](javascript:alert(1)) | <script>alert(1)</script> |`,
+    ].join("\n");
     const { tree } = openDialog(host, message(content));
     walk(tree, (element) => {
-      if (typeof element.type !== "string") throw new SmokeFailure("trust", "unexpanded component in tree", element.type);
-      if ("dangerouslySetInnerHTML" in element.props) throw new SmokeFailure("trust", "raw HTML prop found", element.type);
-      if (["a", "img", "script", "iframe"].includes(element.type)) throw new SmokeFailure("trust", "element from cell text", element.type);
-      if (Object.keys(element.props).some((key) => /^on(?!Click$|Close$)/.test(key))) throw new SmokeFailure("trust", "unexpected event handler", Object.keys(element.props));
+      if (typeof element.type !== "string")
+        throw new SmokeFailure("trust", "unexpanded component in tree", element.type);
+      if ("dangerouslySetInnerHTML" in element.props)
+        throw new SmokeFailure("trust", "raw HTML prop found", element.type);
+      if (["a", "img", "script", "iframe"].includes(element.type))
+        throw new SmokeFailure("trust", "element from cell text", element.type);
+      if (Object.keys(element.props).some((key) => /^on(?!Click$|Close$)/.test(key)))
+        throw new SmokeFailure("trust", "unexpected event handler", Object.keys(element.props));
     });
-    expectEqual("trust", "cells", tablesIn(tree)[0].rows, [[payload, "click", "<script>alert(1)</script>"]]);
+    expectEqual("trust", "cells", tablesIn(tree)[0].rows, [
+      [payload, "click", "<script>alert(1)</script>"],
+    ]);
   },
 
   "inline Markdown and line breaks in cells"(host) {
-    const content = ["| Cell |", "|---|", "| **bold** and *em* and ~~old~~ |", "| `co*de*` |", "| one<br>two<BR/>three |", "| <https://example.com> \\* |"].join("\n");
+    const content = [
+      "| Cell |",
+      "|---|",
+      "| **bold** and *em* and ~~old~~ |",
+      "| `co*de*` |",
+      "| one<br>two<BR/>three |",
+      "| <https://example.com> \\* |",
+    ].join("\n");
     const { tree } = openDialog(host, message(content));
-    expectEqual("inline", "texts", tablesIn(tree)[0].rows, [["bold and em and old"], ["co*de*"], ["one\ntwo\nthree"], ["https://example.com *"]]);
-    expectEqual("inline", "elements", ["strong", "em", "del", "code", "br"].map((type) => findAll(tree, type).length), [1, 1, 1, 1, 2]);
+    expectEqual("inline", "texts", tablesIn(tree)[0].rows, [
+      ["bold and em and old"],
+      ["co*de*"],
+      ["one\ntwo\nthree"],
+      ["https://example.com *"],
+    ]);
+    expectEqual(
+      "inline",
+      "elements",
+      ["strong", "em", "del", "code", "br"].map((type) => findAll(tree, type).length),
+      [1, 1, 1, 1, 2],
+    );
   },
 
   "code spans follow the GFM rules"(host) {
-    const content = ["| Cell |", "|---|", "| ``foo` |", "| `  a  ` |", "| **a `**` b** |", "| ``a`b`` |"].join("\n");
+    const content = [
+      "| Cell |",
+      "|---|",
+      "| ``foo` |",
+      "| `  a  ` |",
+      "| **a `**` b** |",
+      "| ``a`b`` |",
+    ].join("\n");
     const { tree } = openDialog(host, message(content));
     const codes = (row) => findAll(findAll(tree, "tbody")[0].children[row], "code").map(textOf);
     // Runs of different length do not pair; one space is trimmed per side;
     // a code span wins over strong; a longer run may hold a shorter one.
     expectEqual("code", "spans", [0, 1, 2, 3].map(codes), [[], [" a "], ["**"], ["a`b"]]);
-    expectEqual("code", "texts", tablesIn(tree)[0].rows, [["``foo`"], [" a "], ["**a ** b**"], ["a`b"]]);
+    expectEqual("code", "texts", tablesIn(tree)[0].rows, [
+      ["``foo`"],
+      [" a "],
+      ["**a ** b**"],
+      ["a`b"],
+    ]);
   },
 
   "long hostile text stays fast"(host) {
@@ -254,7 +385,10 @@ const scenarios = {
       dashes: [runs("-"), false],
       "wide header with many rows": [wide, true],
       backticks: [cell(runs("`")), true],
-      "rising backtick runs": [cell(Array.from({ length: 360 }, (_, length) => `${"`".repeat(length + 1)}a`).join("")), true],
+      "rising backtick runs": [
+        cell(Array.from({ length: 360 }, (_, length) => `${"`".repeat(length + 1)}a`).join("")),
+        true,
+      ],
       autolinks: [cell("<http:".repeat(HOSTILE_LENGTH / 6)), true],
       brackets: [cell(runs("[")), true],
     };
@@ -262,14 +396,38 @@ const scenarios = {
       const started = performance.now();
       const msg = message(content);
       expectEqual("hostile", `${label} matches`, action.matches(msg, SESSION), expected);
-      const tree = expected ? host.React.render(host.React.createElement(action.component, { message: msg, session: SESSION, close: () => undefined })) : null;
+      const tree = expected
+        ? host.React.render(
+            host.React.createElement(action.component, {
+              message: msg,
+              session: SESSION,
+              close: () => undefined,
+            }),
+          )
+        : null;
       const elapsed = Math.round(performance.now() - started);
-      if (elapsed > HOSTILE_BUDGET_MS) throw new SmokeFailure("hostile", `${label} took ${elapsed} ms (budget ${HOSTILE_BUDGET_MS} ms)`);
+      if (elapsed > HOSTILE_BUDGET_MS)
+        throw new SmokeFailure(
+          "hostile",
+          `${label} took ${elapsed} ms (budget ${HOSTILE_BUDGET_MS} ms)`,
+        );
       // The wide table is drawn up to the caps, with a notice for the rest.
       if (label === "wide header with many rows") {
         const bodyRows = Math.floor(MAX_DRAWN_CELLS / MAX_DRAWN_COLUMNS) - 1;
-        expectEqual("hostile", "drawn cells", findAll(tree, "td").length, bodyRows * MAX_DRAWN_COLUMNS);
-        expectEqual("hostile", "notice", textOf(findAll(tree, "p")).startsWith(`Showing the first ${bodyRows} of 16384 rows and the first ${MAX_DRAWN_COLUMNS} of 8192 columns.`), true);
+        expectEqual(
+          "hostile",
+          "drawn cells",
+          findAll(tree, "td").length,
+          bodyRows * MAX_DRAWN_COLUMNS,
+        );
+        expectEqual(
+          "hostile",
+          "notice",
+          textOf(findAll(tree, "p")).startsWith(
+            `Showing the first ${bodyRows} of 16384 rows and the first ${MAX_DRAWN_COLUMNS} of 8192 columns.`,
+          ),
+          true,
+        );
       }
     }
   },
@@ -283,13 +441,24 @@ const scenarios = {
     const wide = open(`${wideRow(65536, "a")}\n${wideRow(65536, "-")}\n${"a\n".repeat(100)}`);
     expectEqual("cap", "wide table columns", findAll(wide, "th").length, MAX_DRAWN_COLUMNS);
     expectEqual("cap", "wide table cells", cellsIn(wide), MAX_DRAWN_CELLS);
-    expectEqual("cap", "wide table notice", textOf(findAll(wide, "p")).includes(`the first ${MAX_DRAWN_COLUMNS} of 65536 columns`), true);
+    expectEqual(
+      "cap",
+      "wide table notice",
+      textOf(findAll(wide, "p")).includes(`the first ${MAX_DRAWN_COLUMNS} of 65536 columns`),
+      true,
+    );
 
     // Many tables that are each below the cap but far above it together.
     const table = `${wideRow(100, "a")}\n${wideRow(100, "-")}\n${"a\n".repeat(500)}\n`;
     const many = open(table.repeat(46));
-    if (cellsIn(many) > MAX_DRAWN_CELLS) throw new SmokeFailure("cap", `many tables drew ${cellsIn(many)} cells`);
-    expectEqual("cap", "many tables notice", textOf(findAll(many, "p")).includes("of 46 tables."), true);
+    if (cellsIn(many) > MAX_DRAWN_CELLS)
+      throw new SmokeFailure("cap", `many tables drew ${cellsIn(many)} cells`);
+    expectEqual(
+      "cap",
+      "many tables notice",
+      textOf(findAll(many, "p")).includes("of 46 tables."),
+      true,
+    );
 
     // Exactly at the cap: nothing is cut and no notice shows.
     const exact = open(`${wideRow(100, "a")}\n${wideRow(100, "-")}\n${"a\n".repeat(499)}`);
@@ -303,29 +472,56 @@ const scenarios = {
       Object.defineProperty(globalThis, "navigator", { configurable: true, value: { platform } });
       globalThis.isTauri = isTauri;
       try {
-        return findAll(openDialog(host, message(SIMPLE)).tree, "header")[0].props.style.paddingLeft ?? null;
+        return (
+          findAll(openDialog(host, message(SIMPLE)).tree, "header")[0].props.style.paddingLeft ??
+          null
+        );
       } finally {
         delete globalThis.isTauri;
         Object.defineProperty(globalThis, "navigator", saved);
       }
     };
-    if (!insetFor(true, "MacIntel")) throw new SmokeFailure("controls", "the macOS app needs a title inset");
+    if (!insetFor(true, "MacIntel"))
+      throw new SmokeFailure("controls", "the macOS app needs a title inset");
     expectEqual("controls", "browser on a Mac", insetFor(false, "MacIntel"), null);
     expectEqual("controls", "app on Linux", insetFor(true, "Linux x86_64"), null);
   },
 
   "a column with no alignment is drawn left"(host) {
     const { tree } = openDialog(host, message("| a | b |\n|---|--:|\n| 1 | 2 |"));
-    expectEqual("align", "header", findAll(tree, "th").map((cell) => cell.props.style.textAlign), ["left", "right"]);
-    expectEqual("align", "body", findAll(tree, "td").map((cell) => cell.props.style.textAlign), ["left", "right"]);
+    expectEqual(
+      "align",
+      "header",
+      findAll(tree, "th").map((cell) => cell.props.style.textAlign),
+      ["left", "right"],
+    );
+    expectEqual(
+      "align",
+      "body",
+      findAll(tree, "td").map((cell) => cell.props.style.textAlign),
+      ["left", "right"],
+    );
   },
 
   "each table frame is a named, focusable region"(host) {
     const { tree } = openDialog(host, message(`${SIMPLE}\n\n| X |\n|---|\n| 1 |`));
     const frames = findAll(tree, "div").filter((div) => div.props.tabIndex === 0);
-    expectEqual("region", "frames", frames.map((frame) => [frame.props.role, typeof frame.props["aria-labelledby"]]), [["region", "string"], ["region", "string"]]);
+    expectEqual(
+      "region",
+      "frames",
+      frames.map((frame) => [frame.props.role, typeof frame.props["aria-labelledby"]]),
+      [
+        ["region", "string"],
+        ["region", "string"],
+      ],
+    );
     const captionIds = findAll(tree, "h3").map((caption) => caption.props.id);
-    expectEqual("region", "labels", frames.map((frame) => frame.props["aria-labelledby"]), captionIds);
+    expectEqual(
+      "region",
+      "labels",
+      frames.map((frame) => frame.props["aria-labelledby"]),
+      captionIds,
+    );
   },
 
   "Close and Escape both close the dialog"(host) {
